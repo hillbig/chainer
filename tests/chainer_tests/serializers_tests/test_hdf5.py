@@ -1,4 +1,5 @@
 import os
+import sys
 import tempfile
 import unittest
 
@@ -163,6 +164,34 @@ class TestLoadHDF5(unittest.TestCase):
         self.assertEqual(obj.serialize.call_count, 1)
         (serializer,), _ = obj.serialize.call_args
         self.assertIsInstance(serializer, hdf5.HDF5Deserializer)
+
+
+original_import = __import__
+
+
+def no_h5py(name, _globals=None, _locals=None, fromlist=(), level=0):
+    if name == 'h5py':
+        raise ImportError()
+    else:
+        return original_import(name, _globals, _locals, fromlist, level)
+
+
+class TestNoH5py(unittest.TestCase):
+
+    def test_raise(self):
+        del sys.modules['chainer.serializers.hdf5']
+        del sys.modules['chainer.serializers']
+
+        with mock.patch('__builtin__.__import__', side_effect=no_h5py):
+            import chainer.serializers
+            with self.assertRaises(RuntimeError):
+                chainer.serializers.save_hdf5(None, None, None)
+            with self.assertRaises(RuntimeError):
+                chainer.serializers.load_hdf5(None, None)
+            with self.assertRaises(RuntimeError):
+                chainer.serializers.HDF5Serializer(None)
+            with self.assertRaises(RuntimeError):
+                chainer.serializers.HDF5Deserializer(None)
 
 
 testing.run_module(__name__, __file__)
