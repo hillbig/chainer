@@ -236,6 +236,8 @@ Array manipulation routines
 :func:`split`
 :func:`vsplit`
 
+:func:`roll`
+
 Binary operations
 ~~~~~~~~~~~~~~~~~
 
