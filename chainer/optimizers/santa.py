@@ -12,23 +12,24 @@ class Santa(optimizer.GradientMethod):
     See: http://arxiv.org/abs/1512.07962v1
 
     """
-    def __init__(self, eta=0.001, sigma=0.999, eps=0.001, C=0.001, gamma=0.5, burnin=1000):
+    def __init__(self, eta=0.01, sigma=0.9999, eps=0.001, C=0, gamma=0.5, delta=0.001, burnin=3000):
         self.eta = eta
         self.sigma = sigma
         self.eps = eps
         self.C = C
         self.gamma = gamma
+        self.delta = 0.001
         self.burnin = burnin
 
     def init_state(self, param, state):
         xp = cuda.get_array_module(param.data)
         state['v'] = xp.zeros_like(param.data, dtype=xp.float32)
-        state['u'] = numpy.sqrt(self.eta) * xp.random.normal(size=param.data.shape, dtype=xp.float32)
+        state['u'] = numpy.sqrt(self.eta) * xp.random.normal(size=param.data.shape).astype(xp.float32)
         state['g'] = xp.ones_like(param.data, dtype=xp.float32)
         state['alpha'] = xp.full_like(param.data, self.C, dtype=xp.float32)
 
     def force_not_too_small(self, x):
-        return numpy.copysign(numpy.maximum(numpy.abs(x), 0.01), x)
+        return numpy.copysign(numpy.maximum(numpy.abs(x), self.delta), x)
 
     def update_one_cpu(self, param, state):
         v, alpha, prev_u = state['v'], state['alpha'], state['u']
@@ -78,19 +79,19 @@ class Santa(optimizer.GradientMethod):
             inv_beta = self.gamma ** self.t
             u = xp.empty(param.data.shape, dtype=xp.float32)
             cuda.elementwise(
-                'T prev_g, T prev_u, T inv_beta, T eta, T g, T zeta, T grad',
+                'T prev_g, T prev_u, T inv_beta, T eta, T g, T zeta, T grad, T delta',
                 'T alpha, T u',
                 '''alpha += (prev_u * prev_u - eta * inv_beta) / 2;
                    u = exp(-alpha/2) * prev_u;
                    u += -g * grad * eta + sqrt(2 * prev_g * eta * inv_beta) * zeta;
-                   T prev_g_fixed = copysign(max(abs(prev_g), 0.01), prev_g);
-                   T prev_u_fixed = copysign(max(abs(prev_u), 0.01), prev_u);
+                   T prev_g_fixed = copysign(max(abs(prev_g), delta), prev_g);
+                   T prev_u_fixed = copysign(max(abs(prev_u), delta), prev_u);
                    u += eta * inv_beta * (1 - g / prev_g_fixed) / prev_u_fixed;
                    u *= exp(-alpha/2);
                    alpha += (u * u - eta * inv_beta)/2;
                 ''',
                 'santa_exploration')(
-                    state['g'], state['u'], inv_beta, self.eta, g, zeta, param.grad, state['alpha'], u)
+                    state['g'], state['u'], inv_beta, self.eta, g, zeta, param.grad, self.delta, state['alpha'], u)
             state['g'] = g
             state['u'] = u
         else:
@@ -104,9 +105,3 @@ class Santa(optimizer.GradientMethod):
                 'santa_refinement')(
                     state['alpha'], g, param.grad, self.eta, state['u'])
         param.data += g * state['u'] / 2
-                
-                
-
-        
-
-
