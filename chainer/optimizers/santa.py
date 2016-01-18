@@ -61,22 +61,27 @@ class Santa(optimizer.GradientMethod):
 
 
     def update_one_gpu(self, param, state):
-        g = cuda.elementwise(
-            'T data, T grad, T v, T sigma, T eps, T prev_u',
-            'T g',
+        xp = cuda.get_array_module(param.data)
+        g = xp.empty(param.data.shape, dtype=xp.float32)
+
+        cuda.elementwise(
+            'T grad, T sigma, T eps, T prev_u',
+            'T data, T v, T g',
             '''v *= sigma;
                v += (1 - sigma) * grad * grad;
                g = 1 / sqrt(sqrt(v) + eps);
                data += g * prev_u / 2;''',
-            'santa_pre')(param.data, param.grad, state['v'], self.sigma, self.eps, state['u'])
+            'santa_pre')(param.grad, self.sigma, self.eps, state['u'], param.data, state['v'], g)
         if self.t < self.burnin:
             # exploration
-            zeta = xp.random.normal(size=param.data.shape)
-            u = cuda.elementwise(
-                'T prev_g, T prev_u, T inv_beta, T eta, T alpha, T g, T zeta',
-                'T u',
+            zeta = xp.random.normal(size=param.data.shape, dtype=xp.float32)
+            inv_beta = self.gamma ** self.t
+            u = xp.empty(param.data.shape, dtype=xp.float32)
+            cuda.elementwise(
+                'T prev_g, T prev_u, T inv_beta, T eta, T g, T zeta, T grad',
+                'T alpha, T u',
                 '''alpha += (prev_u * prev_u - eta * inv_beta) / 2;
-                   T u = exp(-alpha/2) * prev_u;
+                   u = exp(-alpha/2) * prev_u;
                    u += -g * grad * eta + sqrt(2 * prev_g * eta * inv_beta) * zeta;
                    T prev_g_fixed = copysign(max(abs(prev_g), 0.01), prev_g);
                    T prev_u_fixed = copysign(max(abs(prev_u), 0.01), prev_u);
@@ -85,20 +90,20 @@ class Santa(optimizer.GradientMethod):
                    alpha += (u * u - eta * inv_beta)/2;
                 ''',
                 'santa_exploration')(
-                    g, u, inv_beta, self.eta, state['alpha'], g, zeta)
+                    state['g'], state['u'], inv_beta, self.eta, g, zeta, param.grad, state['alpha'], u)
             state['g'] = g
             state['u'] = u
         else:
             # refinement
-            u = cuda.elementwise(
-                'T u, T alpha, T g, T grad, T eta',
-                '',
+            cuda.elementwise(
+                'T alpha, T g, T grad, T eta',
+                'T u',
                 '''u *= exp(-alpha/2);
                    u -= g * grad * eta;
                    u *= exp(-alpha/2);''',
                 'santa_refinement')(
-                    state['u'], state['alpha'], g, param.grad, self.eta)
-        param.data += g * u / 2
+                    state['alpha'], g, param.grad, self.eta, state['u'])
+        param.data += g * state['u'] / 2
                 
                 
 
