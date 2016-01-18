@@ -12,8 +12,7 @@ class Santa(optimizer.GradientMethod):
     See: http://arxiv.org/abs/1512.07962v1
 
     """
-    def __init__(self, eta=0.001, sigma=0.999, eps=0.001, C=0.001, gamma=0.5, burnin=2000):
-        # note: gamma and burnin are related. When gamma ** t -> 0 then its eqla
+    def __init__(self, eta=0.001, sigma=0.999, eps=0.001, C=0.001, gamma=0.5, burnin=1000):
         self.eta = eta
         self.sigma = sigma
         self.eps = eps
@@ -23,13 +22,13 @@ class Santa(optimizer.GradientMethod):
 
     def init_state(self, param, state):
         xp = cuda.get_array_module(param.data)
-        state['v'] = xp.zeros_like(param.data)
-        state['u'] = numpy.sqrt(self.eta) * numpy.random.normal(size=param.data.shape)
-        state['g'] = xp.ones_like(param.data)
-        state['alpha'] = xp.full_like(param.data, self.C)
+        state['v'] = xp.zeros_like(param.data, dtype=xp.float32)
+        state['u'] = numpy.sqrt(self.eta) * xp.random.normal(size=param.data.shape, dtype=xp.float32)
+        state['g'] = xp.ones_like(param.data, dtype=xp.float32)
+        state['alpha'] = xp.full_like(param.data, self.C, dtype=xp.float32)
 
     def force_not_too_small(self, x):
-        return numpy.sign(x) * (numpy.abs(x) + 0.01)
+        return numpy.copysign(numpy.maximum(numpy.abs(x), 0.01), x)
 
     def update_one_cpu(self, param, state):
         v, alpha, prev_u = state['v'], state['alpha'], state['u']
@@ -62,12 +61,47 @@ class Santa(optimizer.GradientMethod):
 
 
     def update_one_gpu(self, param, state):
-        cuda.elementwise(
-            'T grad, T lr, T one_minus_beta1, T one_minus_beta2, T eps',
-            'T param, T m, T v',
-            '''m += one_minus_beta1 * (grad - m);
-               v += one_minus_beta2 * (grad * grad - v);
-               param -= lr * m / (sqrt(v) + eps);''',
-            'adam')(param.grad, self.lr, 1 - beta1, 1 - beta2,
-                    self.eps, param.data, state['m'], state['v'])
+        g = cuda.elementwise(
+            'T data, T grad, T v, T sigma, T eps, T prev_u',
+            'T g',
+            '''v *= sigma;
+               v += (1 - sigma) * grad * grad;
+               g = 1 / sqrt(sqrt(v) + eps);
+               data += g * prev_u / 2;''',
+            'santa_pre')(param.data, param.grad, state['v'], self.sigma, self.eps, state['u'])
+        if self.t < self.burnin:
+            # exploration
+            zeta = xp.random.normal(size=param.data.shape)
+            u = cuda.elementwise(
+                'T prev_g, T prev_u, T inv_beta, T eta, T alpha, T g, T zeta',
+                'T u',
+                '''alpha += (prev_u * prev_u - eta * inv_beta) / 2;
+                   T u = exp(-alpha/2) * prev_u;
+                   u += -g * grad * eta + sqrt(2 * prev_g * eta * inv_beta) * zeta;
+                   T prev_g_fixed = copysign(max(abs(prev_g), 0.01), prev_g);
+                   T prev_u_fixed = copysign(max(abs(prev_u), 0.01), prev_u);
+                   u += eta * inv_beta * (1 - g / prev_g_fixed) / prev_u_fixed;
+                   u *= exp(-alpha/2);
+                   alpha += (u * u - eta * inv_beta)/2;
+                ''',
+                'santa_exploration')(
+                    g, u, inv_beta, self.eta, state['alpha'], g, zeta)
+            state['g'] = g
+            state['u'] = u
+        else:
+            # refinement
+            u = cuda.elementwise(
+                'T u, T alpha, T g, T grad, T eta',
+                '',
+                '''u *= exp(-alpha/2);
+                   u -= g * grad * eta;
+                   u *= exp(-alpha/2);''',
+                'santa_refinement')(
+                    state['u'], state['alpha'], g, param.grad, self.eta)
+        param.data += g * u / 2
+                
+                
+
+        
+
 
