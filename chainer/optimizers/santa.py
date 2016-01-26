@@ -7,7 +7,7 @@ from chainer import optimizer
 
 class Santa(optimizer.GradientMethod):
 
-    """Santa optimization algorithm.
+    """Santa optimization algorithm with the symmetric splitting scheme (SSS).
 
     See: http://arxiv.org/abs/1512.07962v1
 
@@ -84,8 +84,7 @@ class Santa(optimizer.GradientMethod):
                    u = exp(-alpha/2) * prev_u;
                    u += -g * grad * eta + sqrt(2 * prev_g * eta * inv_beta) * zeta;
                    T prev_g_fixed = copysign(max(abs(prev_g), delta), prev_g);
-                   T prev_u_fixed = copysign(max(abs(prev_u), delta), prev_u);
-                   u += eta * inv_beta * (1 - g / prev_g_fixed) * prev_u_fixed;
+                   u += eta * inv_beta * (1 - g / prev_g_fixed) * prev_u;
                    u *= exp(-alpha/2);
                    alpha += (u * u - eta * inv_beta)/2;
                 ''',
@@ -107,7 +106,7 @@ class Santa(optimizer.GradientMethod):
 
 class SantaE(optimizer.GradientMethod):
 
-    """Santa optimization algorithm.
+    """Santa optimization algorithm with the Euler scheme.
 
     See: http://arxiv.org/abs/1512.07962v1
 
@@ -176,8 +175,7 @@ class SantaE(optimizer.GradientMethod):
                 '''alpha += (prev_u * prev_u - eta * inv_beta);
                    u = sqrt(2 * prev_g * eta * inv_beta) * zeta;
                    T prev_g_fixed = copysign(max(abs(prev_g), delta), prev_g);
-                   T prev_u_fixed = copysign(max(abs(prev_u), delta), prev_u);
-                   u += eta * inv_beta * (1 - g / prev_g_fixed) * prev_u_fixed;
+                   u += eta * inv_beta * (1 - g / prev_g_fixed) * prev_u;
                 ''',
                 'santa_exploration')(
                     state['g'], state['u'], inv_beta, self.eta, g, zeta, param.grad, self.delta, alpha, u)
@@ -190,6 +188,6 @@ class SantaE(optimizer.GradientMethod):
             'T u, T data',
             '''u += (1 - alpha) * prev_u - eta * g * grad;
                data += g * u;''',
-            'santa_pre')(alpha, state['u'], self.eta, g, param.grad, u, param.data)
+            'santa_update')(alpha, state['u'], self.eta, g, param.grad, u, param.data)
         state['u'] = u
 
