@@ -5,6 +5,7 @@ from chainer.optimizers import momentum_sgd
 from chainer.optimizers import nesterov_ag
 from chainer.optimizers import rmsprop
 from chainer.optimizers import rmsprop_graves
+from chainer.optimizers import santa
 from chainer.optimizers import sgd
 
 AdaDelta = ada_delta.AdaDelta
@@ -14,4 +15,5 @@ MomentumSGD = momentum_sgd.MomentumSGD
 NesterovAG = nesterov_ag.NesterovAG
 RMSprop = rmsprop.RMSprop
 RMSpropGraves = rmsprop_graves.RMSpropGraves
+Santa = santa.Santa
 SGD = sgd.SGD
